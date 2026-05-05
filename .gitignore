@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+
+# uv / virtual environment
+.venv/
+.uv/
+
+# Jupyter
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# Data — generated locally, not committed
+# Data — generated locally, not committed
+data/clean/*
+data/dirty/*
+data/export/*
+
+# But keep the folder markers
+!data/clean/.gitkeep
+!data/dirty/.gitkeep
+!data/export/.gitkeep
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+!.vscode/extensions.json
+
+# Logs
+*.log
+*.tmp
+*.bak
