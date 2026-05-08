@@ -65,9 +65,8 @@ INJECTION_RATES = {
     "gig_orphan_owner"       : 0.010,   # 1.0% of gig owners don't exist (churned, deleted)
     "app_early_date"         : 0.015,   # 1.5% of applications predate the gig posting
     "app_selected_no_start"  : 0.020,   # 2.0% selected apps missing assignment_start_date
-    "app_end_before_start"   : 0.010,   # 1.0% of assigned gigs end before they start
     "app_zero_hours"         : 0.015,   # 1.5% of assignments have hours = 0
-    "app_duplicate_apply"    : 0.020,   # 2.0% of gigs get a second application from same person
+    "app_reapplication"      : 0.050,   # 15% of withdrawn applications get a re-application
     "app_approval_before_app": 0.010,   # 1.0% approval timestamps precede application
     "skills_out_of_range"    : 0.020,   # 2.0% get skill_level 0 or 6
     "skills_duplicate"       : 0.025,   # 2.5% get a duplicate employee+skill row
@@ -359,23 +358,6 @@ def inject_applications(rows, fieldnames):
     fname = "raw_gig_applications_and_assignments.csv"
     n = len(rows)
 
-    # [DATE] Application date before gig posting date
-    # Real source: timezone mismatch (gig posted UTC+1, application logged UTC)
-    early_idx = sample_indices(n, INJECTION_RATES["app_early_date"])
-    for i in early_idx:
-        try:
-            posted = rows[i]["posted_date"] if "posted_date" in rows[i] else None
-            app_dt = rows[i]["application_date"][:10]
-            app_date = date.fromisoformat(app_dt)
-            rows[i]["application_date"] = (
-                app_date - timedelta(days=random.randint(1, 5))
-            ).isoformat() + " " + rows[i]["application_date"][11:]
-        except Exception:
-            pass
-    log(fname, "app_early_date", "DATE",
-        "application_date before gig posted_date (UTC vs UTC+1 timezone mismatch from vendor)",
-        len(early_idx))
-
     # [NULL] Selected applications missing assignment_start_date
     # Real source: status updated to Selected but assignment not yet formally confirmed
     selected_idx = [i for i, r in enumerate(rows) if r["application_status"] == "Selected"]
@@ -389,21 +371,6 @@ def inject_applications(rows, fieldnames):
         "Selected applications with no assignment dates (status updated before formal confirmation)",
         len(actual_null_start))
 
-    # [DATE] Assignment end_date before start_date
-    # Real source: date fields swapped during bulk import from spreadsheet
-    assigned_idx = [i for i, r in enumerate(rows)
-                    if r["assignment_start_date"] and r["assignment_end_date"]]
-    end_before_start_idx = sample_indices(len(assigned_idx), INJECTION_RATES["app_end_before_start"])
-    actual_ebs = [assigned_idx[i] for i in end_before_start_idx]
-    for i in actual_ebs:
-        # Swap the dates
-        rows[i]["assignment_start_date"], rows[i]["assignment_end_date"] = (
-            rows[i]["assignment_end_date"], rows[i]["assignment_start_date"]
-        )
-    log(fname, "app_end_before_start", "DATE",
-        "assignment_end_date before assignment_start_date (date columns swapped in bulk import)",
-        len(actual_ebs))
-
     # [RANGE] Assigned hours = 0
     # Real source: hours_per_week field defaulted to 0 in old form version
     assigned_hrs_idx = [i for i, r in enumerate(rows) if r["assigned_hours_per_week"]]
@@ -414,26 +381,33 @@ def inject_applications(rows, fieldnames):
     log(fname, "app_zero_hours", "RANGE",
         "assigned_hours_per_week = 0 (old form version defaulted numeric field to 0)",
         len(actual_zero_hrs))
-
-    # [DUP] Same employee applying twice to same gig
-    # Real source: employee clicked Apply twice; or Withdraw + re-Apply on same session
-    gig_applicants = defaultdict(list)
-    for i, r in enumerate(rows):
-        gig_applicants[r["gig_id"]].append((i, r["employee_id"]))
-    dup_apply_count = 0
-    dup_app_ids = set()
-    for gig_id, apps_list in gig_applicants.items():
-        if random.random() < INJECTION_RATES["app_duplicate_apply"] and len(apps_list) > 1:
-            # Pick one applicant and duplicate their row with a new app_id
-            idx, emp_id = random.choice(apps_list)
-            new_row = dict(rows[idx])
-            new_row["application_id"] = f"APP-DUPL{dup_apply_count:04X}"
-            new_row["application_status"] = "Applied"  # second attempt lands as Applied
-            rows.append(new_row)
-            dup_apply_count += 1
-    log(fname, "app_duplicate_apply", "DUP",
-        "Same employee applied twice to same gig (double-click or Withdraw + re-Apply same session)",
-        dup_apply_count)
+    
+    # [DUP] Re-application after withdrawal
+    # Real source: employee withdrew then re-applied while gig was still open
+    # Downstream fix: keep latest application per employee+gig
+    withdrawn = [(i, r) for i, r in enumerate(rows) if r["application_status"] == "Withdrawn"]
+    n_reapply = max(1, int(len(withdrawn) * 0.15))
+    reapply_sample = random.sample(withdrawn, n_reapply)
+    reapply_count = 0
+    for count, (idx, r) in enumerate(reapply_sample):
+        new_row = dict(r)
+        new_row["application_id"] = f"APP-REAP{count:04X}"
+        new_row["application_status"] = "Applied"
+        try:
+            orig_date = date.fromisoformat(r["application_date"][:10])
+            new_date = orig_date + timedelta(days=random.randint(3, 14))
+            new_row["application_date"] = new_date.isoformat() + " 09:00:00"
+        except Exception:
+            pass
+        new_row["manager_approval_date"] = ""
+        new_row["assignment_start_date"] = ""
+        new_row["assignment_end_date"]   = ""
+        new_row["assigned_hours_per_week"] = ""
+        rows.append(new_row)
+        reapply_count += 1
+    log(fname, "app_reapplication", "DUP",
+        "Employee withdrew then re-applied to same gig — two records per employee+gig",
+        reapply_count)
 
     # [DATE] Manager approval timestamp before application timestamp
     # Real source: manager pre-approved via email; HR admin backdated the approval incorrectly
