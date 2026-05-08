@@ -561,19 +561,6 @@ def inject_activity_log(rows, fieldnames):
         "RateGig", "ReportIssue", "InviteColleague"
     ]
 
-    # [NOISE] Events at 3-4am (scheduled batch job noise)
-    # Real source: nightly sync job logs "Login" events for SSO token refresh
-    bot_idx = sample_indices(n, INJECTION_RATES["log_bot_events"])
-    for i in bot_idx:
-        ts = rows[i]["event_timestamp"]
-        if len(ts) >= 10:
-            rows[i]["event_timestamp"] = ts[:10] + f" 0{random.randint(3,4)}:{random.randint(0,59):02d}:{random.randint(0,59):02d}"
-            rows[i]["event_type"] = "Login"
-            rows[i]["metadata"] = json.dumps({"source": "nightly_sso_refresh", "auto": True})
-    log(fname, "log_bot_events", "NOISE",
-        "Login events at 3–4am (nightly SSO token refresh job logs synthetic Login events)",
-        len(bot_idx))
-
     # [DUP] Duplicate event_ids
     # Real source: API retry on network timeout sent the same event twice
     dup_evt_idx = sample_indices(n, INJECTION_RATES["log_duplicate_event_id"])
